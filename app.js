@@ -144,34 +144,55 @@ function imgOf(p) {
   }
   return imgCache.get(p.id + p.photoV);
 }
+/* Repères du corps sur une photo (fractions de l'image) : hx/hy = milieu des hanches, hd = écart des hanches,
+   sy = hauteur des épaules, ay = chevilles, k = bas du haut sous les hanches (en part du buste).
+   Calés automatiquement par détection de posture ; à défaut, déduits des anciens repères manuels. */
+const DEF_K = .1;
+function poseOf(p) {
+  if (p.pose) return { k: DEF_K, ...p.pose };
+  const c = calibOf(p), isBot = p.category === 'bas';
+  const hy = isBot ? c.cut + .06 : c.cut - .06;
+  return { hx: (c.l + c.r) / 2, hy, hd: (c.r - c.l) / 1.8, sy: hy - .28, ay: c.ankle ?? null, k: DEF_K };
+}
+function geom(p, img, override) {
+  const q = override || poseOf(p), w = img.width, h = img.height;
+  return { hx: q.hx * w, hy: q.hy * h, hd: Math.max(1, q.hd * w), sy: q.sy * h, ay: q.ay != null ? q.ay * h : null, torso: Math.max(1, (q.hy - q.sy) * h), k: q.k ?? DEF_K, w, h };
+}
 async function drawSilhouette(canvas, slots, W, overrides = {}) {
   const P = s => slots[s] ? byId(slots[s]) : null;
   const top = P('veste') || P('haut'), under = P('veste') ? P('haut') : null, bot = P('bas'), shoe = P('chaussure'), acc = P('accessoire');
   const [ti, ui, bi, si, ai] = await Promise.all([top, under, bot, shoe, acc].map(p => p ? imgOf(p) : null));
-  const cal = p => ({ ...calibOf(p), ...(overrides[p.id] || {}) });
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const hipW = W * .56, cx = W / 2;
+  // échelle commune : écart des hanches et longueur du buste ramenés à la même taille sur toutes les photos
+  const D = W * .27, R = 2.45, cx = W / 2;
+  const scaleOf = G => (D / G.hd + D * R / G.torso) / 2;
+  const T = ti ? geom(top, ti, overrides[top.id]) : null, B = bi ? geom(bot, bi, overrides[bot.id]) : null;
+  const ref = T || B;
   const parts = [];
-  let y = 0;
-  if (ti) {
-    const c = cal(top), s = hipW / ((c.r - c.l) * ti.width);
-    const h = c.cut * ti.height * s;
-    parts.push({ img: ti, sx: 0, sy: 0, sw: ti.width, sh: c.cut * ti.height, dx: cx - (c.l + c.r) / 2 * ti.width * s, dy: 0, dw: ti.width * s, dh: h, z: 2 });
-    y = h;
+  let y = 0, hipsY = 0;
+  if (ref) {
+    const s0 = scaleOf(ref), y0 = Math.max(0, ref.sy - .5 * ref.torso);
+    hipsY = (ref.hy - y0) * s0;
   }
-  if (bi) {
-    const c = cal(bot), s = hipW / ((c.r - c.l) * bi.width);
-    const ankle = shoe ? (c.ankle ?? .87) : 1;
-    const sy = c.cut * bi.height, sh = (ankle - c.cut) * bi.height;
-    const dy = Math.max(0, y - W * .045); // le haut recouvre le haut du bas, comme un t-shirt porté par-dessus
-    parts.push({ img: bi, sx: 0, sy, sw: bi.width, sh, dx: cx - (c.l + c.r) / 2 * bi.width * s, dy, dw: bi.width * s, dh: sh * s, z: 1 });
-    y = dy + sh * s;
+  if (T) {
+    const s = scaleOf(T), y0 = Math.max(0, T.sy - .5 * T.torso);
+    const end = B ? Math.min(T.h, T.hy + T.k * T.torso) : T.h;
+    parts.push({ img: ti, sx: 0, sy: y0, sw: T.w, sh: end - y0, dx: cx - T.hx * s, dy: hipsY + (y0 - T.hy) * s, dw: T.w * s, dh: (end - y0) * s, z: 2 });
+    y = hipsY + (end - T.hy) * s;
+  }
+  if (B) {
+    const s = scaleOf(B);
+    // sous un haut, le bas démarre un peu au-dessus de la ligne de raccord : le haut recouvre la jointure
+    const b0 = T ? Math.max(0, B.hy + (T.k - .05) * B.torso) : Math.max(0, B.sy - .5 * B.torso);
+    const end = shoe && B.ay ? Math.min(B.h, B.ay + .04 * B.torso) : B.h;
+    parts.push({ img: bi, sx: 0, sy: b0, sw: B.w, sh: end - b0, dx: cx - B.hx * s, dy: hipsY + (b0 - B.hy) * s, dw: B.w * s, dh: (end - b0) * s, z: 1 });
+    y = hipsY + (end - B.hy) * s;
   }
   // chaussures : les photos sont des gros plans vus d'en haut, on les montre dans un encadré au niveau des pieds
   let shoeBox = null;
   if (si) {
-    const bw = hipW * 1.15, bh = W * .3;
-    shoeBox = { x: cx - bw / 2, y: Math.max(0, y - bh * .25), w: bw, h: bh };
+    const bw = W * .44, bh = W * .44;
+    shoeBox = { x: cx - bw / 2, y: Math.max(0, y - bh * .2), w: bw, h: bh };
     y = shoeBox.y + bh + 6;
   }
   const H = Math.max(Math.round(y), Math.round(W * 1.2));
@@ -191,7 +212,7 @@ async function drawSilhouette(canvas, slots, W, overrides = {}) {
     const b = shoeBox, ratio = b.w / b.h;
     let sw = si.width, sh = sw / ratio;
     if (sh > si.height) { sh = si.height; sw = sh * ratio; }
-    const sx = (si.width - sw) / 2, sy = Math.min(si.height - sh, Math.max(0, si.height * .62 - sh / 2));
+    const sx = (si.width - sw) / 2, sy = Math.min(si.height - sh, Math.max(0, si.height * .55 - sh / 2));
     g.save();
     g.beginPath(); g.roundRect(b.x, b.y, b.w, b.h, 12); g.closePath(); g.clip();
     g.drawImage(si, sx, sy, sw, sh, b.x, b.y, b.w, b.h);
@@ -220,6 +241,67 @@ function drawAll() {
   });
 }
 const silCanvas = (ids, w) => `<canvas class="sil" data-items="${esc(ids.join(','))}" data-w="${w}" width="${w}" height="${Math.round(w * 1.6)}"></canvas>`;
+
+/* ---------- calage automatique (détection de posture sur l'appareil) ----------
+   Le moteur et le modèle se téléchargent une fois, puis restent en cache. Les photos ne sortent jamais. */
+const MP_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.21';
+const MP_MODEL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
+const CALIBRATED = ['haut', 'veste', 'bas'];
+let landmarkerP = null;
+function getLandmarker() {
+  if (!landmarkerP) {
+    landmarkerP = (async () => {
+      const vision = await import(`${MP_BASE}/vision_bundle.mjs`);
+      const files = await vision.FilesetResolver.forVisionTasks(`${MP_BASE}/wasm`);
+      return vision.PoseLandmarker.createFromOptions(files, { baseOptions: { modelAssetPath: MP_MODEL, delegate: 'CPU' }, runningMode: 'IMAGE', numPoses: 1 });
+    })().catch(e => { landmarkerP = null; throw e; });
+  }
+  return landmarkerP;
+}
+async function detectPose(p) {
+  const lm = await getLandmarker();
+  const img = await imgOf(p);
+  if (!img) return null;
+  const L = lm.detect(img).landmarks?.[0];
+  if (!L) return null;
+  const seen = i => (L[i].visibility ?? 1) > .5 && L[i].y > -.02 && L[i].y < 1.02;
+  if (!seen(23) || !seen(24)) return null;
+  const hx = (L[23].x + L[24].x) / 2, hy = (L[23].y + L[24].y) / 2, hd = Math.abs(L[23].x - L[24].x);
+  if (hd < .03) return null;
+  const sy = seen(11) && seen(12) ? (L[11].y + L[12].y) / 2 : hy - 2.45 * hd * img.width / img.height;
+  const ay = seen(27) && seen(28) ? (L[27].y + L[28].y) / 2 : null;
+  const r = n => Math.round(n * 1000) / 1000;
+  return { hx: r(hx), hy: r(hy), hd: r(hd), sy: r(sy), ay: ay == null ? null : r(ay) };
+}
+async function autoCalibrate(list, onStep) {
+  const failed = [];
+  for (let i = 0; i < list.length; i++) {
+    const p = list[i];
+    onStep?.(i, list.length, p);
+    const q = await detectPose(p);
+    if (q) { p.pose = { ...q, k: p.pose?.k ?? DEF_K }; p.poseAuto = true; p.poseManual = false; await DB.put('pieces', p); }
+    else failed.push(p.label);
+  }
+  return failed;
+}
+async function runAutoCalibration(all) {
+  const list = S.pieces.filter(p => CALIBRATED.includes(p.category) && (all || !p.pose) && !p.poseManual);
+  if (!list.length) { toast('Toutes les silhouettes sont déjà calées.'); return; }
+  sheet(`<h2>Calage automatique</h2><p class="sub" id="calib-progress">Préparation du détecteur… (la première fois, il faut Internet)</p>`);
+  try {
+    const failed = await autoCalibrate(list, (i, n, p) => {
+      const el = document.getElementById('calib-progress');
+      if (el) el.textContent = `${i + 1} / ${n} · ${p.label}`;
+    });
+    await loadAll();
+    sheet(`<h2>Calage terminé</h2><p>${list.length - failed.length} pièce${list.length - failed.length > 1 ? 's' : ''} calée${list.length - failed.length > 1 ? 's' : ''} automatiquement.</p>
+      ${failed.length ? `<p class="sub">Corps non détecté sur : ${esc(failed.join(', '))}. ${failed.length > 1 ? 'Elles gardent' : 'Elle garde'} le réglage précédent, à ajuster à la main si besoin.</p>` : ''}
+      <button class="btn main" data-act="sheet-close">OK</button>`);
+    render();
+  } catch (e) {
+    sheet(`<h2>Calage impossible</h2><p class="sub">Le détecteur n'a pas pu se charger. La première fois, il faut une connexion Internet ; ensuite il marche hors ligne.</p><button class="btn main" data-act="sheet-close">OK</button>`);
+  }
+}
 
 /* ---------- import de « Style · Fred » ---------- */
 async function importStyleFred(text) {
@@ -359,21 +441,24 @@ const VIEWS = {
     const p = byId(S.param);
     const c = S.calibDraft;
     const isBot = p.category === 'bas';
-    const sl = (key, label, min, max) => `<label class="slider">${label}<input type="range" min="${min}" max="${max}" step="0.005" value="${c[key]}" data-act="calib-slide" data-key="${key}"></label>`;
+    const sl = (key, label, min, max) => `<label class="slider">${label}<input type="range" min="${min}" max="${max}" step="0.005" value="${c[key] ?? (min + max) / 2}" data-act="calib-slide" data-key="${key}"></label>`;
+    const state = p.poseManual ? 'Réglée à la main' : p.poseAuto ? 'Calée automatiquement' : 'Pas encore calée automatiquement';
     return `<button class="back" data-act="open-piece" data-id="${esc(p.id)}">‹ ${esc(p.label)}</button>
-      <h2>Régler la silhouette</h2>
-      <p class="sub">${isBot ? 'Place la ligne moutarde sur la ceinture, les deux traits sur les côtés des hanches, et la ligne grise aux chevilles.' : 'Place la ligne moutarde là où la pièce s’arrête (bas de la chemise ou de la veste) et les deux traits sur les côtés des hanches.'}</p>
+      <div class="top"><h2>Régler la silhouette</h2><span class="badge">${state}</span></div>
+      <p class="sub">Points rouges sur les hanches, ligne verte aux épaules${isBot ? ', ligne bleue aux chevilles' : ', ligne moutarde là où le vêtement s’arrête'}. L'aperçu se met à jour en direct.</p>
       <div class="calib">
         <canvas id="calib-photo"></canvas>
         <div class="sil-wrap"><canvas id="calib-preview"></canvas></div>
       </div>
+      <button class="btn thread" data-act="calib-auto">Caler automatiquement</button>
       <div class="card">
-        ${sl('cut', isBot ? 'Ceinture' : 'Bas de la pièce', .1, .8)}
-        ${sl('l', 'Hanche gauche', 0, .6)}
-        ${sl('r', 'Hanche droite', .4, 1)}
-        ${isBot ? sl('ankle', 'Chevilles', .6, 1) : ''}
+        ${sl('hy', 'Hanches · hauteur', .1, .9)}
+        ${sl('hx', 'Hanches · centre', .1, .9)}
+        ${sl('hd', 'Hanches · écart', .05, .6)}
+        ${sl('sy', 'Épaules · hauteur', 0, .7)}
+        ${isBot ? sl('ay', 'Chevilles', .5, 1) : sl('k', 'Bas du vêtement', -.2, .7)}
       </div>
-      <div class="row"><button class="btn alt" data-act="calib-reset">Valeurs par défaut</button><button class="btn main" data-act="calib-save">Enregistrer</button></div>`;
+      <div class="row"><button class="btn alt" data-act="open-piece" data-id="${esc(p.id)}">Annuler</button><button class="btn main" data-act="calib-save">Enregistrer</button></div>`;
   },
 
   outfits() {
@@ -434,11 +519,13 @@ const VIEWS = {
       <div class="card"><h2>Sauvegarde</h2><p class="sub">Tout est sur ce téléphone. Exporte une sauvegarde de temps en temps et range-la sur ton Drive.</p>
         <button class="btn main" data-act="export">Exporter une sauvegarde</button>
         <button class="btn alt" data-act="pick-backup">Restaurer une sauvegarde</button></div>
+      <div class="card"><h2>Silhouettes</h2><p class="sub">Le téléphone repère tes épaules, hanches et chevilles sur chaque photo pour raccorder les pièces. Les réglages faits à la main sont conservés.</p>
+        <button class="btn thread" data-act="auto-all">Caler automatiquement toutes les silhouettes</button></div>
       <div class="card"><h2>Import</h2><p class="sub">Ajoute les pièces et tenues de « Style · Fred » qui ne sont pas encore là. Rien n'est écrasé.</p>
         <button class="btn alt" data-act="pick-stylefred">Importer ma page Style · Fred</button></div>
       <div class="card"><h2>Tout effacer</h2><p class="sub">Supprime pièces, tenues et historique de ce téléphone.</p>
         <button class="btn danger" data-act="wipe">Tout effacer</button></div>
-      <p class="sub">Penderie · version 1 · hors ligne</p>`;
+      <p class="sub">Penderie · version 1.1 · hors ligne</p>`;
   },
 };
 
@@ -467,13 +554,15 @@ async function drawCalib() {
   cv.width = img.width; cv.height = img.height;
   const g = cv.getContext('2d');
   g.drawImage(img, 0, 0);
+  const G = geom(p, img, c);
   const lw = Math.max(2, img.width / 140);
+  const hline = (yy, col, dash) => { g.strokeStyle = col; g.setLineDash(dash ? [lw * 3, lw * 2] : []); g.beginPath(); g.moveTo(0, yy); g.lineTo(img.width, yy); g.stroke(); g.setLineDash([]); };
   g.lineWidth = lw;
-  g.strokeStyle = '#C8901A';
-  g.beginPath(); g.moveTo(0, c.cut * img.height); g.lineTo(img.width, c.cut * img.height); g.stroke();
-  g.strokeStyle = '#2B3A67';
-  [c.l, c.r].forEach(x => { g.beginPath(); g.moveTo(x * img.width, (c.cut - .08) * img.height); g.lineTo(x * img.width, (c.cut + .08) * img.height); g.stroke(); });
-  if (c.ankle != null) { g.strokeStyle = '#9A9DA3'; g.setLineDash([lw * 3, lw * 2]); g.beginPath(); g.moveTo(0, c.ankle * img.height); g.lineTo(img.width, c.ankle * img.height); g.stroke(); g.setLineDash([]); }
+  hline(G.sy, '#2E8B57');
+  if (p.category === 'bas') { if (G.ay != null) hline(G.ay, '#3D6FD8', true); }
+  else hline(G.hy + G.k * G.torso, '#C8901A');
+  g.fillStyle = '#D93A2B';
+  [G.hx - G.hd / 2, G.hx + G.hd / 2].forEach(x => { g.beginPath(); g.arc(x, G.hy, lw * 2.4, 0, Math.PI * 2); g.fill(); });
   const partnerCat = p.category === 'bas' ? 'haut' : 'bas';
   const partner = S.pieces.find(x => x.category === partnerCat);
   const slots = { [p.category]: p.id };
@@ -545,6 +634,7 @@ const ACTIONS = {
       const r = await importStyleFred(await f.text());
       toast(`Import terminé : ${r.pieces} pièces, ${r.outfits} tenues.`);
       go('today');
+      if (r.pieces) runAutoCalibration(false);
     } catch (e) { toast(e.message || 'Import impossible.'); }
   },
   'pick-backup': async () => {
@@ -599,9 +689,20 @@ const ACTIONS = {
   }),
   'add-piece': () => addPieceSheet(),
 
-  'open-calib': el => { const p = byId(el.dataset.id); S.calibDraft = calibOf(p); go('calib', p.id); },
-  'calib-reset': () => { const p = byId(S.param); S.calibDraft = calibOf({ ...p, calib: null }); render(); },
-  'calib-save': async () => { await savePieceField(S.param, { calib: { ...S.calibDraft } }); toast('Silhouette réglée.'); go('piece', S.param); },
+  'open-calib': el => { const p = byId(el.dataset.id); S.calibDraft = poseOf(p); go('calib', p.id); },
+  'calib-auto': async () => {
+    toast('Calage en cours…');
+    try {
+      const q = await detectPose(byId(S.param));
+      if (!q) { toast('Corps non détecté sur cette photo : règle-la à la main.'); return; }
+      S.calibDraft = { ...q, k: S.calibDraft.k ?? DEF_K };
+      await savePieceField(S.param, { pose: { ...S.calibDraft }, poseAuto: true, poseManual: false });
+      toast('Calée automatiquement.');
+      render();
+    } catch (e) { toast('Détecteur indisponible : il faut Internet la première fois.'); }
+  },
+  'calib-save': async () => { await savePieceField(S.param, { pose: { ...S.calibDraft }, poseManual: true }); toast('Silhouette réglée.'); go('piece', S.param); },
+  'auto-all': () => runAutoCalibration(true),
 
   'outfit-occ': el => { S.outfitOcc = el.dataset.occ; render(); },
   'open-outfit': el => go('outfit', el.dataset.id),
@@ -686,7 +787,14 @@ document.getElementById('sheet').addEventListener('click', async e => {
   await loadAll();
   sheet(null);
   toast('Pièce ajoutée.');
-  if (['haut', 'veste', 'bas'].includes(p.category)) { S.calibDraft = calibOf(p); go('calib', p.id); } else go('piece', p.id);
+  if (CALIBRATED.includes(p.category)) {
+    try {
+      const q = await detectPose(p);
+      if (q) { p.pose = { ...q, k: DEF_K }; p.poseAuto = true; await DB.put('pieces', p); }
+    } catch (e) { /* hors ligne au premier usage : réglage manuel */ }
+    S.calibDraft = poseOf(p);
+    go('calib', p.id);
+  } else go('piece', p.id);
 });
 
 /* ---------- événements ---------- */
