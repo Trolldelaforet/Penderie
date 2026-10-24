@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2B3A67">
+<title>Penderie</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main id="app" aria-live="polite"></main>
+<nav id="nav" hidden>
+  <button data-act="go" data-view="today"><span class="dot"></span>Aujourd'hui</button>
+  <button data-act="go" data-view="dressing"><span class="dot"></span>Dressing</button>
+  <button data-act="go" data-view="outfits"><span class="dot"></span>Tenues</button>
+  <button data-act="go" data-view="settings"><span class="dot"></span>Réglages</button>
+</nav>
+<div id="sheet" hidden></div>
+<div id="toast" hidden></div>
+<input type="file" id="file-stylefred" accept=".html,.htm,text/html" hidden>
+<input type="file" id="file-backup" accept=".json,application/json" hidden>
+<input type="file" id="file-photo" accept="image/*" hidden>
+<script src="calib-presets.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
