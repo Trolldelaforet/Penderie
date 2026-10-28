@@ -422,7 +422,7 @@ function confirmSheet(text, okLabel, onOk) {
   sheet(`<h2>${esc(text)}</h2><div class="row"><button class="btn alt" data-act="sheet-close">Annuler</button><button class="btn danger" data-act="sheet-ok">${esc(okLabel)}</button></div>`);
   confirmSheet.ok = onOk;
 }
-function go(view, param = null) { S.view = view; S.param = param; render(); window.scrollTo(0, 0); }
+function go(view, param = null) { if (S.updatePending) { location.reload(); return; } S.view = view; S.param = param; render(); window.scrollTo(0, 0); }
 const chip = (label, on, act, extra = '') => `<button class="chip${on ? ' on' : ''}" data-act="${act}" ${extra}>${esc(label)}</button>`;
 const piecesLine = ids => `<div class="pieces-line">${ids.map(byId).filter(Boolean).map(p => `<span>${esc(p.label)}</span>`).join('')}</div>`;
 const colorName = c => COLORS[c]?.[0] || c;
@@ -920,5 +920,18 @@ document.addEventListener('input', e => {
     return;
   }
   render();
-  if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    /* mise à jour automatique : quand une nouvelle version prend la main, on recharge tout seul
+       (sauf en plein réglage de tenue ou de silhouette : on attend le prochain changement d'écran) */
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloading) return;
+      if (['builder', 'calib'].includes(S.view)) { S.updatePending = true; toast('Nouvelle version prête : elle s’ouvrira au prochain écran.'); return; }
+      reloading = true; location.reload();
+    });
+    navigator.serviceWorker.register('sw.js').then(reg => {
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+    }).catch(() => {});
+  }
 })();
