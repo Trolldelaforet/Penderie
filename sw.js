@@ -1,5 +1,5 @@
 /* Penderie : fonctionnement hors ligne. Changer VERSION à chaque mise à jour de l'appli. */
-const VERSION = 'penderie-v2';
+const VERSION = 'penderie-v3';
 const TOOLS = 'penderie-detecteur'; // moteur et modèle de détection de posture, gardés d'une version à l'autre
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'calib-presets.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 

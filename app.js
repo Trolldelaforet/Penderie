@@ -71,7 +71,7 @@ const S = {
   pieces: [], outfits: [], worn: [],
   view: 'today', param: null,
   dressCat: 'all', dressSearch: '', outfitOcc: 'all',
-  today: null, draft: null, calibDraft: null, addDraft: null,
+  sugg: null, today: null, draft: null, calibDraft: null, addDraft: null,
 };
 const byId = id => S.pieces.find(p => p.id === id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -85,6 +85,7 @@ async function loadAll() {
   S.pieces.sort((a, b) => a.label.localeCompare(b.label, 'fr'));
   S.outfits.sort((a, b) => (a.order ?? 9999) - (b.order ?? 9999) || a.title.localeCompare(b.title, 'fr'));
   S.today = await DB.getKV('today');
+  S.sugg = null;
 }
 
 /* ---------- moteur « habille-moi » ---------- */
@@ -103,6 +104,25 @@ function scoreOutfit(list) {
   for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) s += scorePair(list[i], list[j]);
   return s;
 }
+/* cohérence de saison : on lit le nom de la pièce (short, pull, doudoune…) pour ne jamais
+   mélanger un short avec une couche chaude (pull, sweat, veste, doudoune, anorak…) */
+const isShort = p => p.category === 'bas' && /\b(short|bermuda)s?\b/i.test(p.label);
+const LIGHT_LAYER = /léger|legere|coupe-vent|jean|denim|lin\b|bomber|harrington|chemise/i;
+const WARM_TOP = /pull|sweat|hoodie|polaire|col roulé|col roule|maille|gilet/i;
+function isWarmLayer(p) {
+  if (p.category === 'veste') return !LIGHT_LAYER.test(p.label);
+  if (p.category === 'haut') return WARM_TOP.test(p.label);
+  return false;
+}
+/* renvoie la raison de l'incohérence, ou null si la tenue tient la route */
+function clashReason(list) {
+  const short = list.find(isShort);
+  if (!short) return null;
+  const warm = list.find(isWarmLayer);
+  return warm ? `${short.label} avec ${warm.label}` : null;
+}
+const isCoherent = list => !clashReason(list);
+
 function pool(cat, occ) {
   const all = S.pieces.filter(p => p.category === cat && p.state !== 'donner');
   const fit = all.filter(p => (p.occasions || []).includes(occ));
@@ -115,18 +135,50 @@ function generate(occ, locked = {}) {
     veste: !!locked.veste || Math.random() < chance.veste[occ],
     accessoire: !!locked.accessoire || Math.random() < chance.accessoire[occ],
   };
-  let best = null, bestScore = -Infinity;
-  for (let i = 0; i < 80; i++) {
-    const o = {};
-    for (const slot of SLOTS) {
-      if ((slot === 'veste' || slot === 'accessoire') && !want[slot]) continue;
-      const p = locked[slot] ? byId(locked[slot]) : pick(pool(slot, occ));
-      if (p) o[slot] = p;
+  const search = want => {
+    let best = null, bestScore = -Infinity;
+    for (let i = 0; i < 80; i++) {
+      const o = {};
+      for (const slot of SLOTS) {
+        if ((slot === 'veste' || slot === 'accessoire') && !want[slot]) continue;
+        const p = locked[slot] ? byId(locked[slot]) : pick(pool(slot, occ));
+        if (p) o[slot] = p;
+      }
+      const list = Object.values(o);
+      if (!isCoherent(list)) continue;
+      const sc = scoreOutfit(list) + Math.random() * 3;
+      if (sc > bestScore) { bestScore = sc; best = o; }
     }
-    const sc = scoreOutfit(Object.values(o)) + Math.random() * 3;
-    if (sc > bestScore) { bestScore = sc; best = o; }
+    return best;
+  };
+  // pas de combinaison cohérente avec la veste : on la retire plutôt que de forcer un short sous une doudoune
+  const best = search(want) || (locked.veste ? null : search({ ...want, veste: false })) || {};
+  return Object.fromEntries(Object.entries(best).map(([k, p]) => [k, p.id]));
+}
+
+/* propositions autour d'une pièce : tenues enregistrées cohérentes d'abord, puis tirages cohérents et variés */
+function suggestWith(p, max = 4) {
+  const out = [], seen = new Set();
+  const key = ids => ids.slice().sort().join('|');
+  const add = (ids, title, saved) => {
+    const k = key(ids);
+    if (seen.has(k) || out.length >= max) return;
+    seen.add(k); out.push({ ids, title, saved });
+  };
+  S.outfits.filter(o => o.items.includes(p.id) && isCoherent(o.items.map(byId).filter(Boolean)))
+    .slice(0, 2).forEach(o => add(o.items, o.title, true));
+  const occs = p.occasions?.length ? p.occasions : OCCS.map(([k]) => k);
+  for (let i = 0; i < 60 && out.length < max; i++) {
+    const occ = occs[i % occs.length];
+    const slots = generate(occ, { [p.category]: p.id });
+    const ids = slotsToIds(slots);
+    if (ids.length < 3) continue;
+    // on garde des propositions variées : au moins 2 pièces différentes de chaque tenue déjà retenue
+    const others = ids.filter(id => id !== p.id);
+    if (out.some(o => others.filter(id => !o.ids.includes(id)).length < 2)) continue;
+    add(ids, `Avec ${p.label}`, false);
   }
-  return Object.fromEntries(Object.entries(best || {}).map(([k, p]) => [k, p.id]));
+  return out;
 }
 function itemsToSlots(ids) {
   const o = {};
@@ -375,6 +427,16 @@ const chip = (label, on, act, extra = '') => `<button class="chip${on ? ' on' : 
 const piecesLine = ids => `<div class="pieces-line">${ids.map(byId).filter(Boolean).map(p => `<span>${esc(p.label)}</span>`).join('')}</div>`;
 const colorName = c => COLORS[c]?.[0] || c;
 
+function suggestBlock(p) {
+  if (S.sugg?.id !== p.id) S.sugg = { id: p.id, list: suggestWith(p) };
+  const list = S.sugg.list;
+  if (!list.length) return '';
+  return `<div class="top"><h2>Idées avec cette pièce</h2><button class="btn small alt" data-act="sugg-reroll">Autres idées</button></div>
+    <div class="olist">${list.map((s, i) => `<button class="ocard" data-act="sugg-open" data-i="${i}">
+      <div class="sil-wrap">${silCanvas(s.ids, 150)}</div>
+      ${s.saved ? '<span class="badge">Tenue enregistrée</span>' : ''}<b>${esc(s.title)}</b></button>`).join('')}</div>`;
+}
+
 /* ---------- écrans ---------- */
 const VIEWS = {
   welcome() {
@@ -421,6 +483,7 @@ const VIEWS = {
     const canCalib = ['haut', 'veste', 'bas'].includes(p.category);
     return `<button class="back" data-act="go" data-view="dressing">‹ Dressing</button>
       <div class="photo-big"><img src="${p.photo}" alt="${esc(p.label)}"></div>
+      ${suggestBlock(p)}
       <div class="label">
         <div><span>Nom</span><input type="text" id="pf-label" value="${esc(p.label)}"></div>
         <div><span>Catégorie</span><select id="pf-category">${CATS.map(([k]) => `<option value="${k}"${p.category === k ? ' selected' : ''}>${CAT_ONE[k]}</option>`).join('')}</select></div>
@@ -463,7 +526,9 @@ const VIEWS = {
 
   outfits() {
     const list = S.outfits.filter(o => S.outfitOcc === 'all' || o.occasion === S.outfitOcc);
+    const nBad = S.outfits.filter(o => !isCoherent(o.items.map(byId).filter(Boolean))).length;
     return `<div class="top"><div><h1>Tenues</h1><div class="sub">${S.outfits.length} tenues enregistrées</div></div><button class="btn small thread" data-act="new-outfit">Créer</button></div>
+      ${nBad ? `<button class="btn alt" data-act="review-outfits">⚠ ${nBad} tenue${nBad > 1 ? 's' : ''} à revoir (short + couche chaude)</button>` : ''}
       <div class="chips">${chip('Toutes', S.outfitOcc === 'all', 'outfit-occ', 'data-occ="all"')}${OCCS.map(([k, l]) => chip(l, S.outfitOcc === k, 'outfit-occ', `data-occ="${k}"`)).join('')}${chip('Favorites', S.outfitOcc === 'fav', 'outfit-occ', 'data-occ="fav"')}</div>
       ${(S.outfitOcc === 'fav' ? S.outfits.filter(o => o.favorite) : list).length ? `<div class="olist">${(S.outfitOcc === 'fav' ? S.outfits.filter(o => o.favorite) : list).map(o => `<button class="ocard" data-act="open-outfit" data-id="${esc(o.id)}">
         <div class="sil-wrap">${silCanvas(o.items, 150)}</div>
@@ -525,7 +590,7 @@ const VIEWS = {
         <button class="btn alt" data-act="pick-stylefred">Importer ma page Style · Fred</button></div>
       <div class="card"><h2>Tout effacer</h2><p class="sub">Supprime pièces, tenues et historique de ce téléphone.</p>
         <button class="btn danger" data-act="wipe">Tout effacer</button></div>
-      <p class="sub">Penderie · version 1.1 · hors ligne</p>`;
+      <p class="sub">Penderie · version 1.2 · hors ligne</p>`;
   },
 };
 
@@ -676,6 +741,26 @@ const ACTIONS = {
   'pf-occ': async () => {
     const occs = [...document.querySelectorAll('[data-act="pf-occ"]:checked')].map(i => i.value);
     await savePieceField(S.param, { occasions: occs });
+  },
+  'sugg-reroll': () => { S.sugg = null; render(); },
+  'sugg-open': el => {
+    const s = S.sugg.list[+el.dataset.i], p = byId(S.sugg.id);
+    openBuilder(itemsToSlots(s.ids), { occ: p.occasions?.[0] || 'quotidien' });
+    S.draft.locked[p.category] = true; render();
+  },
+  'review-outfits': () => {
+    const bad = S.outfits.filter(o => !isCoherent(o.items.map(byId).filter(Boolean)));
+    if (!bad.length) { toast('Aucune tenue incohérente.'); return; }
+    sheet(`<h2>${bad.length} tenue${bad.length > 1 ? 's' : ''} à revoir</h2>
+      <p class="sub">Short avec une couche chaude :</p>
+      <ul>${bad.map(o => `<li>${esc(o.title)} <small>(${esc(clashReason(o.items.map(byId).filter(Boolean)))})</small></li>`).join('')}</ul>
+      <div class="row"><button class="btn alt" data-act="sheet-close">Garder</button><button class="btn danger" data-act="purge-outfits">Supprimer</button></div>`);
+  },
+  'purge-outfits': async () => {
+    const bad = S.outfits.filter(o => !isCoherent(o.items.map(byId).filter(Boolean)));
+    sheet(null);
+    for (const o of bad) await DB.del('outfits', o.id);
+    await loadAll(); toast(`${bad.length} tenue${bad.length > 1 ? 's' : ''} supprimée${bad.length > 1 ? 's' : ''}.`); render();
   },
   'build-with': el => { const p = byId(el.dataset.id); openBuilder({ [p.category]: p.id }); S.draft.locked[p.category] = true; render(); },
   'del-piece': el => confirmSheet('Supprimer cette pièce ?', 'Supprimer', async () => {
