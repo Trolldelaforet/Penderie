@@ -1,6 +1,38 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#2B3A67"/>
-  <path d="M256 150a34 34 0 1 1 34 34c-18 0-34 10-34 28v18" fill="none" stroke="#C8901A" stroke-width="22" stroke-linecap="round"/>
-  <path d="M256 230 96 330c-14 9-8 30 9 30h302c17 0 23-21 9-30Z" fill="none" stroke="#F7F7F5" stroke-width="22" stroke-linejoin="round"/>
-  <path d="M130 376h252" stroke="#C8901A" stroke-width="10" stroke-dasharray="18 14" stroke-linecap="round"/>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="38%" r="75%">
+      <stop offset="0" stop-color="#3A4D85"/>
+      <stop offset="1" stop-color="#1D2849"/>
+    </radialGradient>
+    <linearGradient id="wood" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#E3B67C"/>
+      <stop offset=".45" stop-color="#C58B4E"/>
+      <stop offset="1" stop-color="#8F5A2B"/>
+    </linearGradient>
+    <linearGradient id="brass" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F3D88A"/>
+      <stop offset=".5" stop-color="#C8901A"/>
+      <stop offset="1" stop-color="#8A5F0B"/>
+    </linearGradient>
+    <filter id="sh" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="10" stdDeviation="9" flood-color="#000" flood-opacity=".45"/>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <g filter="url(#sh)">
+    <!-- crochet laiton -->
+    <path d="M256 232v-26c0-16 10-24 22-28 20-6 36-22 36-42 0-26-20-44-44-44s-44 18-44 44" fill="none" stroke="#6B4708" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M256 232v-26c0-16 10-24 22-28 20-6 36-22 36-42 0-26-20-44-44-44s-44 18-44 44" fill="none" stroke="url(#brass)" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M250 200c4-14 14-18 24-22" fill="none" stroke="#FFF3C8" stroke-opacity=".6" stroke-width="3" stroke-linecap="round"/>
+    <!-- corps en bois : épaules galbées + barre basse -->
+    <path fill-rule="evenodd" fill="url(#wood)" d="M256 224C238 234 160 282 116 308C94 321 98 354 124 354H388C414 354 418 321 396 308C352 282 274 234 256 224Z M256 262C238 274 190 302 160 320C150 326 154 332 164 332H348C358 332 362 326 352 320C322 302 274 274 256 262Z"/>
+    <!-- reflets et ombres du bois -->
+    <path d="M256 226C240 236 164 283 120 310" fill="none" stroke="#FBE3B8" stroke-opacity=".55" stroke-width="4" stroke-linecap="round"/>
+    <path d="M256 226C272 236 348 283 392 310" fill="none" stroke="#FBE3B8" stroke-opacity=".3" stroke-width="4" stroke-linecap="round"/>
+    <path d="M126 350H386" stroke="#5E3817" stroke-opacity=".55" stroke-width="4" stroke-linecap="round"/>
+    <path d="M178 345H334" stroke="#F0CC96" stroke-opacity=".25" stroke-width="2" stroke-linecap="round"/>
+    <!-- collier laiton au niveau du cou -->
+    <rect x="240" y="222" width="32" height="18" rx="7" fill="url(#brass)"/>
+    <path d="M244 226h24" stroke="#FFF3C8" stroke-opacity=".6" stroke-width="2.5" stroke-linecap="round"/>
+  </g>
 </svg>
